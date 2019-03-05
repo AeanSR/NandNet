@@ -11,6 +11,8 @@ from six.moves import urllib
 import csv
 import glob
 import re
+import random
+import numpy as np
 
 IMAGENET_PATH = './Datasets/ILSVRC2012/'
 DATA_DIR = './Datasets/'
@@ -197,6 +199,90 @@ def group_batch_images(x):
     return img
 
 
+class WaveformProvider:
+    def __init__(self, drive, response, size=None, training=True):
+        self.size = size or [None]*2
+        self.drive = drive
+        self.response = response
+        self.training = training
+
+    def generate_batches(self, batch_size, min_queue_examples=1000, num_threads=8):
+        """Construct a queued batch of images and labels.
+
+        Args:
+        image: 3-D Tensor of [height, width, 3] of type.float32.
+        label: 1-D Tensor of type.int32
+        min_queue_examples: int32, minimum number of samples to retain
+        in the queue that provides of batches of examples.
+        batch_size: Number of images per batch.
+
+        Returns:
+        images: Images. 4D tensor of [batch_size, height, width, 3] size.
+        labels: Labels. 1D tensor of [batch_size] size.
+        """
+        # Create a queue that shuffles the examples, and then
+        # read 'batch_size' images + labels from the example queue.
+
+        drive = self.drive
+        response = self.response
+        if self.training:
+            drives, response_batch = tf.train.shuffle_batch(
+            [drive, response],
+            batch_size=batch_size,
+            num_threads=num_threads,
+            capacity=min_queue_examples + 3 * batch_size,
+            min_after_dequeue=min_queue_examples)
+        else:
+            drives, response_batch = tf.train.batch(
+            [drive, response],
+            batch_size=batch_size,
+            num_threads=num_threads,
+            capacity=min_queue_examples + 3 * batch_size)
+
+        return drives, response_batch
+
+class FullAdderWaveformGenerator:
+    def __init__(self, size=None, training=True):
+        self.size = size or [None]*2
+        self.training = training
+
+    def generate_batches(self, batch_size, min_queue_examples=1000, num_threads=8):
+        drive = []
+        response = []
+        for i in range(batch_size):
+          in_x1 = random.randint(0,1)
+          in_x2 = random.randint(0,1)
+          in_c  = random.randint(0,1)
+          out_y = (in_x1 + in_x2 + in_c) % 2
+          out_c = 1 if (in_x1 + in_x2 + in_c) >= 2 else 0
+          in_x1 = in_x1 * 2 - 1
+          in_x2 = in_x2 * 2 - 1
+          in_c  = in_c * 2 - 1
+          out_y = out_y * 2 - 1
+          out_c = out_c * 2 - 1
+          drive.append([float(in_x1), float(in_x2), float(in_c)])
+          response.append([float(out_y), float(out_c)])
+        return tf.convert_to_tensor(drive), tf.convert_to_tensor(response)
+
+class XorWaveformGenerator:
+    def __init__(self, size=None, training=True):
+        self.size = size or [None]*2
+        self.training = training
+
+    def generate_batches(self, batch_size, min_queue_examples=1000, num_threads=8):
+        drive = []
+        response = []
+        for i in range(batch_size):
+          in_x1 = random.randint(0,1)
+          in_x2 = random.randint(0,1)
+          out_y = 0 if in_x1 == 1 and in_x2 == 1 else 1
+          in_x1 = in_x1 * 2 - 1
+          in_x2 = in_x2 * 2 - 1
+          out_y = out_y * 2 - 1
+          drive.append([float(in_x1), float(in_x2)])
+          response.append([float(out_y)])
+          #print(in_x1, in_x2, out_y)
+        return tf.convert_to_tensor(drive), tf.convert_to_tensor(response)
 
 def get_data_provider(name, training=True):
     if name == 'imagenet':
@@ -225,3 +311,13 @@ def get_data_provider(name, training=True):
         else:
             return DataProvider([os.path.join(data_dir, 'test.bin')],
                                 10000, False, __read_cifar)
+    elif name == 'fulladder':
+        if training:
+          return FullAdderWaveformGenerator([1024,3], True)
+        else:
+          return FullAdderWaveformGenerator([128,3], False)
+    elif name == 'xor':
+        if training:
+          return XorWaveformGenerator([1024,2], True)
+        else:
+          return XorWaveformGenerator([128,2], False)

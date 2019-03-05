@@ -1,9 +1,13 @@
+import os
+#os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3,4,5,6,7"
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
 import tensorflow as tf
 import importlib
 import tensorflow.python.platform
 import os
 import numpy as np
-from progress.bar import Bar
+#from progress.bar import Bar
 from datetime import datetime
 from tensorflow.python.platform import gfile
 from data import *
@@ -112,10 +116,16 @@ def train(model, data,
         y = model(x, is_training=True)
         # Define loss and optimizer
         with tf.name_scope('objective'):
-            loss = tf.reduce_mean(
-                tf.nn.sparse_softmax_cross_entropy_with_logits(labels=yt, logits=y))
-            accuracy = tf.reduce_mean(
-                tf.cast(tf.nn.in_top_k(y, yt, 1), tf.float32))
+#            loss = tf.reduce_mean(
+#                tf.nn.sparse_softmax_cross_entropy_with_logits(labels=yt, logits=y))
+#            accuracy = tf.reduce_mean(
+#                tf.cast(tf.nn.in_top_k(y, yt, 1), tf.float32))
+             diff = tf.subtract(y,yt)
+             printop = tf.Print(diff, [y,yt,diff])
+             with tf.control_dependencies([printop]):
+               loss = tf.reduce_mean(tf.multiply(diff, diff))
+             #loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=yt, logits=y))
+             accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.sign(y), tf.sign(yt)), tf.float32))
         opt = tf.contrib.layers.optimize_loss(loss, global_step, learning_rate, 'Adam',
                                               gradient_noise_scale=None, gradient_multipliers=None,
                                               clip_gradients=None, #moving_average_decay=0.9,
@@ -180,29 +190,28 @@ def train(model, data,
         #with tf.Session() as session:
         #    print(session.run(ww))
 
-        print('Started epoch %d' % epoch)
-        bar = Bar('Training', max=num_batches,
-                  suffix='%(percent)d%% eta: %(eta)ds')
+        #print('Started epoch %d' % epoch)
+
+        #bar = Bar('Training', max=num_batches,
+        #          suffix='%(percent)d%% eta: %(eta)ds')
         while curr_step < data.size[0]:
             _, loss_val = sess.run([train_op, loss])
             curr_step += FLAGS.batch_size
-            bar.next()
+            #bar.next()
 
         step, acc_value, loss_value, summary = sess.run(
             [global_step, accuracy_avg, loss_avg, summary_op])
         saver.save(sess, save_path=checkpoint_dir +
                    '/model.ckpt', global_step=global_step)
-        bar.finish()
-        print('Finished epoch %d' % epoch)
-        print('Training Accuracy: %.3f' % acc_value)
-        print('Training Loss: %.3f' % loss_value)
+        #bar.finish()
+
+
 
         test_acc, test_loss = evaluate(model, FLAGS.dataset,
                                        batch_size=batch_size,
                                        checkpoint_dir=checkpoint_dir)  # ,
         # log_dir=log_dir)
-        print('Test Accuracy: %.3f' % test_acc)
-        print('Test Loss: %.3f' % test_loss)
+        print('Finished epoch %d' % epoch, ', Training Accuracy: %.3f' % acc_value, ', Training Loss: %.3f' % loss_value, ', Test Accuracy: %.3f' % test_acc, ', Test Loss: %.3f' % test_loss)
 
         summary_out = tf.Summary()
         summary_out.ParseFromString(summary)
@@ -226,7 +235,7 @@ def main(argv=None):  # pylint: disable=unused-argument
         assert gfile.Exists(model_file), 'no model file named: ' + model_file
         gfile.Copy(model_file, FLAGS.checkpoint_dir + '/model.py')
 
-    m = importlib.import_module('.' +FLAGS.model, 'models')
+    m = importlib.import_module('models.' +FLAGS.model)
     data = get_data_provider(FLAGS.dataset, training=True)
 
     train(m.model, data,

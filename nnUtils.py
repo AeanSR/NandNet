@@ -4,6 +4,8 @@ from tensorflow.python.training import moving_averages
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.framework import ops
 
+rev_gap = 1.
+
 def binarize(x):
     """
     Clip and binarize tensor using the straight through estimator (STE) for the gradient.
@@ -214,3 +216,87 @@ def Residual(moduleList, name='Residual'):
             output = tf.add(m(x, is_training=is_training), x)
             return output
     return model
+
+def inputbin(x):
+    """
+    Clip and binarize tensor using the straight through estimator (STE) for the gradient.
+    For inputs: clip to 0/1, then concat with self-reverses.
+    """
+    g = tf.get_default_graph()
+
+    with ops.name_scope("Binarized") as name:
+        return x
+        #x=tf.clip_by_value(x,0,1)
+#        with g.gradient_override_map({"Sign": "Identity", "ClipByValue": "Identity"}):
+#            return tf.sign(x)
+
+def weightbin(x):
+    """
+    Clip and binarize tensor using the straight through estimator (STE) for the gradient.
+    For weights: clip to 0/1.
+    """
+    g = tf.get_default_graph()
+#    x = tf.clip_by_value(x, -1, 1)
+    with ops.name_scope("Binarized") as name:
+        with g.gradient_override_map({"Round": "Identity", "ClipByValue": "Identity"}):
+            #x = tf.round(tf.clip_by_value(x,-1,1))
+            return x
+
+def crossprod(a, b):
+    tile_a = tf.tile(tf.expand_dims(a, 1), [1, tf.shape(b)[0]])  
+    tile_b = tf.tile(tf.expand_dims(b, 0), [tf.shape(a)[0], 1]) 
+    return tf.multiply(tile_a, tile_b) 
+
+def NandLayer(nOutputPlane, name=None, reuse=False):
+    def b_nandLayer(x, is_training=True):
+        with tf.variable_scope(name,'Nand',[x], reuse=reuse):
+            '''
+            Note that we use binarized version of the input (bin_x) and the weights (bin_w). Since the binarized function uses STE
+            we calculate the gradients using bin_x and bin_w but we update w (the full precition version).
+            '''
+
+            reshaped = tf.reshape(x, [x.get_shape().as_list()[0], -1])
+            nInputPlane = reshaped.get_shape().as_list()[1]
+            w = tf.get_variable('weight', [nInputPlane, nOutputPlane], initializer=tf.random_uniform_initializer(-1, 1))
+            bin_w = weightbin(w)
+            bin_x = inputbin(reshaped)
+            w_unpack = tf.unstack(bin_w, axis=0)
+            x_unpack = tf.unstack(bin_x, axis=1)
+            nmos = 1.
+            pmos = 0.
+            for w_i in w_unpack:
+                for x_i in x_unpack:
+                    ident = crossprod(x_i, w_i)
+                    nmos = tf.multiply(nmos, tf.nn.relu(tf.negative(ident)))
+                    pmos = tf.add(pmos, tf.nn.relu(ident))
+            output = tf.subtract(pmos, nmos)
+            #output = binarize(tf.negative(tf.matmul(bin_x, bin_w)))
+        return output
+    return b_nandLayer
+
+def DenseNandLayer(nOutputPlane, name=None, reuse=False):
+    def b_denseNandLayer(x, is_training=True):
+        with tf.variable_scope(name,'DenseNand',[x], reuse=reuse):
+            '''
+            Note that we use binarized version of the input (bin_x) and the weights (bin_w). Since the binarized function uses STE
+            we calculate the gradients using bin_x and bin_w but we update w (the full precition version).
+            '''
+            reshaped = tf.reshape(x, [x.get_shape().as_list()[0], -1])
+            nInputPlane = reshaped.get_shape().as_list()[1]
+            w = tf.get_variable('weight', [nInputPlane, nOutputPlane], initializer=tf.random_uniform_initializer(-1, 1))
+            bin_w = weightbin(w)
+            bin_x = inputbin(reshaped)
+            w_unpack = tf.unstack(bin_w, axis=0)
+            x_unpack = tf.unstack(bin_x, axis=1)
+            nmos = 1.
+            pmos = 0.
+            for w_i in w_unpack:
+                for x_i in x_unpack:
+                    ident = crossprod(x_i, w_i)
+                    nmos = tf.multiply(nmos, tf.nn.relu(tf.negative(ident)))
+                    pmos = tf.add(pmos, tf.nn.relu(ident))
+            output = tf.subtract(pmos, nmos)
+            #output = binarize(tf.negative(tf.matmul(bin_x, bin_w)))
+        return tf.concat([x, output], 1)
+    return b_denseNandLayer
+
